@@ -1,683 +1,518 @@
-import React, {useEffect, useState, useRef, useMemo} from "react";
+import React, {useEffect, useState, useRef} from "react";
 import {
-    Alert,
     View, 
+    Modal, 
     Animated,
     StyleSheet,
-    PanResponder,
-    FlatList,
     TouchableWithoutFeedback,
-    Text,
-    Easing
+    Dimensions,
+    Keyboard,
+    Platform,
+    PanResponder,
 } from 'react-native';
 
+//*required
+//*dynamic* can be changed during open modal
+//*isModalOpen={true/false}open/close modal *dynamic*
+//style={styles} *dynamic*
+//animationDuration={milliseconds} *dynamic*
+//onClosing={func} *dynamic*
+//onClosed={func} *dynamic*
+//onOpened={func} *dynamic*
+//*modalPosition={'top', 'center', 'bottom', 'top-left', 'top-right'}
+//*entryFrom={'left', 'top', 'right', 'bottom', 'fade-in'}
+//backdrop={true/ default false}
+//backdropOpacity={num}
+//backdropColor={'color'}
+//backdropPressToClose={true/ default false}
+//useNativeDriver={true/ default false}
 
-//animationDuration={number / default 250}
-//useNativeDriver={bool / default false}
-//borderRadius={int / default 10}
+export default ModalBox = (props) => {
+    const [is_modal_open, setIsModalOpen] = useState(false);
+    
+    const backdrop_opacity = useRef(new Animated.Value(0));
+    const to_backdrop_opacity = useRef(0);
+    const backdrop_color = useRef('#000');
 
-//*props for DragList
-//threshold={number / default 0} when to swap elements(sensitivity) in %
-//blockLeftRightMove={bool / default false} false: move element to any direction, true: only up/down
-//pressDelay={number / default 1000} in how many micro-sec should dragging be activated
-//draggingActivated={function}
-//draggingDeactivated={function}
-//stylesWhenDragging={styles class}
-//defaultStyles={styles class}
+    const animation_duration = useRef(250);
+    const use_native_driver = useRef(false);
 
-//props for swipeList
-//*renderRightActions={function(offset_x)}
-//*renderLeftActions={function(offset_x)}
-//rightThreshold={number / default 0}
-//leftThreshold={number / default 0}
-//overSwipeRight={bool / default false}
-//overSwipeLeft={bool / default false}
-//closeAllSwipes={bool}
-//onSwiped={function}
+    const screen_size = useRef(Dimensions.get('window'));
 
-const ListItem = (props) => {
-    const [pan_responder, setPanResponder] = useState(PanResponder.create());
-    const can_drag = useRef(false);
-    const terminate_dragging = useRef(false);
-    const timeout = useRef(() =>{});
-    const drag_xy = useRef(new Animated.ValueXY(0));
-    const element_height = useRef(0);
-    const [z_index, setZIndex] = useState(0);
-    const swap_on = useRef(0);
-    const last_y_position = useRef(0); //last position when move direction changed
-    const last_dy_when_dragging = useRef(0);
-    const move_direction = useRef('');
-    const max_order_num = useRef(0);
-    const move_order_num = useRef(0);
-    const threshold = useRef(0);
-    const [element_styles, setElementStyles] = useState();
-    const [global_opacity, setGlobalOpacity] = useState(0);//workaround to display contents after css is loaded
+    const modal_size = useRef({width: 0, height: 0});
+    const [modal_rendered, setModalRendered] = useState(false);
 
-    const is_content_on_right = useRef(false);
-    const is_right_open = useRef(false);
-    const right_actions_width = useRef(0);
-    const right_threshold = useRef(0);
-    const over_swipe_right = useRef(false);
-    const is_content_on_left = useRef(false);
-    const is_left_open = useRef(false);
-    const left_actions_width = useRef(0);
-    const left_threshold = useRef(0);
-    const over_swipe_left = useRef(false);
-    const last_offset_x = useRef(0);
+    const container_size = useRef({width: 0, height: 0});
+    const [container_rendered, setContainerRendered] = useState(false);
+
+    const offset_y = useRef(new Animated.Value(0));
     const offset_x = useRef(new Animated.Value(0));
-    const can_swipe = useRef(false);
-    const is_swiped = useRef(false);
-
-    const close_actions_animating = useRef(false)
+    const initial_offset_y = useRef(0);
+    const initial_offset_x = useRef(0);
+    const [readjust_vertically, setReadjustVertically] = useState(false);
+    const [readjust_horizontally, setReadjustHorizontally] = useState(false);
+    const modal_fade_opacity = useRef(new Animated.Value(0));
+    const keyboard_listeners = useRef([]);
+    const keyboard_height = useRef(0);
+    const [pan_responder, setPanResponder] = useState(PanResponder.create());
+    const to_offset_x = useRef(0);
+    const to_offset_y = useRef(0);
+    const first_time_open = useRef(true);
+    const is_modal_closing = useRef(false);
 
     useEffect(() => {
-        createDragResponder();
-
-        //right actions
-        if(props.isContentOnRight) {
-            is_content_on_right.current = true;
+        if(props.backdropOpacity) {
+            to_backdrop_opacity.current = props.backdropOpacity;
         }
+
+        if(props.backdropColor) {
+            backdrop_color.current = props.backdropColor;
+        }
+
+        if(props.animationDuration) {
+            animation_duration.current = props.animationDuration;
+        }
+
+        if (props.useNativeDriver) {
+            use_native_driver.current = true;
+        }
+
+        if (Platform.OS === 'ios') {
+            keyboard_listeners.current = [
+                ...keyboard_listeners.current,
+                Keyboard.addListener('keyboardWillChangeFrame', onKeyboardChange),
+                Keyboard.addListener('keyboardDidHide', onKeyboardHide)
+            ];
+        }
+
+        createPanResponder();
         
-        if(props.rightThreshold) {
-            right_threshold.current = props.rightThreshold;
-        }
-
-        if(props.overSwipeRight === true) {
-            over_swipe_right.current = true;
-        }
-
-        //left actions
-        if(props.isContentOnLeft) {
-            is_content_on_left.current = true;
-        }
-        
-        if(props.leftThreshold) {
-            left_threshold.current = props.leftThreshold;
-        }
-
-        if(props.overSwipeLeft === true) {
-            over_swipe_left.current = true;
-        }
-
-        setElementStyles(props.defaultStyles);
-        setGlobalOpacity(1);
+        return cleanup = () => {
+            if (keyboard_listeners.current) keyboard_listeners.current.forEach((sub) => sub.remove());
+        };
     }, []);
 
-    useMemo(() => {
-        props.pressDelay ? press_delay = props.pressDelay : press_delay = 1000;
-        props.animationDuration ? animation_duration = props.animationDuration : animation_duration = 250;
-        props.useNativeDriver === true ? use_native_driver = true : use_native_driver = false;
-        props.blockLeftRightMove === true ? block_left_right = true : block_left_right = false;
-    }, [props]);
-
     useEffect(() => {
-        drag_xy.current.setValue({x: 0, y: 0});
-        props.addMoveControl(moveControl);
-        props.addCloseSwipeLink(closeSwipe);
+        if(props.isModalOpen) {
+            if(first_time_open.current) {
+                setInitialPosition();
+            }
 
-        last_y_position.current = 0;
-        last_dy_when_dragging.current = 0;
-        move_direction.current = '';
-    }, [props.data]);
-
-    useEffect(() => {
-        max_order_num.current = props.maxOrderNum;
-    }, [props.maxOrderNum]);
-
-    useEffect(() => {
-        if(props.closeAllSwipes == true && is_swiped.current == true) {
-            closeActions();
+            setIsModalOpen(true);
         }
-    }, [props.closeAllSwipes]);
-
-    const closeSwipe = () => {
-        if(is_swiped.current) {
-            closeActions();
-            is_swiped.current = false;
+        else if (is_modal_open) {
+            closeModal();
         }
-    }
+    }, [props.isModalOpen]);
 
-    const openActions = (to_offset_x) => {
-        Animated.timing(
-            offset_x.current,
-            {
-                toValue: to_offset_x,
-                duration: animation_duration,
-                useNativeDriver: use_native_driver,
-                easing: Easing.bezier(.21,.4,.4,.78)
-            }
-        ).start(() => {
-            props.closeOtherSwipes(props.getOrderNum());//sometimes first closeOtherSwipes wont work.
-            props.onSwiped();
-            is_swiped.current = true;
-        });
-    }
+    useEffect(() => {
+        if(!is_modal_open) {
+            setReadjustVertically(false);
+            setReadjustHorizontally(false);
+            setModalRendered(false);
+            setContainerRendered(false);
 
-    const closeActions = () => {
-        close_actions_animating.current = true;
-        Animated.timing(
-            offset_x.current,
-            {
-                toValue: 0,
-                duration: animation_duration,
-                useNativeDriver: use_native_driver,
-                easing: Easing.bezier(.21,.4,.4,.78)
-            }
-        ).start(() => {
-            last_offset_x.current = 0;
-            is_right_open.current = false;
-            is_left_open.current = false;
+            first_time_open.current = true;
+            modal_fade_opacity.current.setValue(0);
+            is_modal_closing.current = false;
 
-            if(props.onSwipeClosed) {
-                props.onSwipeClosed();
-            }
-            close_actions_animating.current = false;
-        });
-    }
+            props.onClosed ? props.onClosed() : false;
+        }
+    }, [is_modal_open]);
 
-    const createDragResponder = () => {
-        const onPanMove = (e, state) => {
-            if(can_drag.current && !terminate_dragging.current) {
-                clearTimeout(timeout.current);
-                can_swipe.current = false;
-                if(block_left_right) {
-                    state.dx = 0;
-                }
-                
-                let current_y = state.dy + last_dy_when_dragging.current;
-                drag_xy.current.setValue({ x: state.dx, y: current_y});
-
-                //used to change move_direction
-                if(current_y < (last_y_position.current - 5)) {//went up
-                    last_y_position.current = current_y;
-                    move_direction.current = 'up';
-                }
-                else if(current_y > (last_y_position.current + 5)) {//went down
-                    last_y_position.current = current_y;
-                    move_direction.current = 'down';
-                }
-
-                //detect when to perform swap
-                if (current_y < (swap_on.current - threshold.current) 
-                && move_direction.current == 'up') {//swap up
-                    move_order_num.current--;
-                    if(move_order_num.current >= 1) {
-                        props.changePosition('up', move_order_num.current);
-                        swap_on.current -= element_height.current;
-                    }
-                    else {
-                        move_order_num.current = 1;
-                    }
-                }
-                else if(current_y > (swap_on.current + threshold.current) 
-                && move_direction.current == 'down') {//swap down
-                    move_order_num.current++;
-                    if(move_order_num.current <= max_order_num.current) {
-                        props.changePosition('down', move_order_num.current);
-                        swap_on.current += element_height.current;
-                    }
-                    else {
-                        move_order_num.current = max_order_num.current;
-                    }
-                }
-            }
-            else {
-                clearTimeout(timeout.current);
-            }
-
-            if(can_swipe.current) {
-                if(is_content_on_right.current) {
-                    if((state.moveX < state.x0 && !is_right_open.current) || 
-                    (state.moveX > state.x0 && is_right_open.current)) {
-                        var new_position = state.dx + last_offset_x.current;
-                        
-                        if(!over_swipe_right.current && Math.abs(state.dx) > right_actions_width.current &&
-                        !is_right_open.current) {
-                            offset_x.current.setValue(-right_actions_width.current);
-                            return;
-                        }
-                        if(!over_swipe_right.current && is_right_open.current && new_position > 0) {
-                            offset_x.current.setValue(0);
-                            return;
-                        }
-                        offset_x.current.setValue(new_position);
-                    }
-                }
-                if(is_content_on_left.current) {
-                    if((state.moveX > state.x0 && !is_left_open.current) || //moves right
-                    (state.moveX < state.x0 && is_left_open.current)) { //moves left
-                        var new_position = state.dx + last_offset_x.current;
+    useEffect(() => {//keyboard (android only) changed/mounted/dismounted will invoke this function
+        if(props.isModalOpen && !is_modal_closing.current) {
     
-                        if(!over_swipe_left.current && Math.abs(state.dx) > left_actions_width.current &&
-                        !is_left_open.current) {
-                            offset_x.current.setValue(left_actions_width.current);
-                            return;
-                        }
-                        if(!over_swipe_left.current && is_left_open.current && new_position < 0) {
-                            offset_x.current.setValue(0);
-                            return;
-                        }
-                        offset_x.current.setValue(new_position);
-                    }
+            if(props.onOpening && first_time_open.current) {
+                props.onOpening();
+            }
+
+            if((modal_rendered && container_rendered) || 
+               (!first_time_open.current && (readjust_horizontally || readjust_vertically))) {
+                openModal();
+            }
+        }
+    }, [
+        modal_rendered, 
+        container_rendered,
+        readjust_horizontally, 
+        readjust_vertically
+    ]);
+
+    const setInitialPosition = () => {
+        //set initial position of the modal
+        if(props.entryFrom == 'bottom') {
+            var new_offset = screen_size.current.height;
+            offset_y.current.setValue(new_offset);
+            initial_offset_y.current = new_offset;
+        }
+        else if(props.entryFrom == 'top') {
+            var new_offset = -screen_size.current.height;
+            offset_y.current.setValue(new_offset);
+            initial_offset_y.current = new_offset;
+        }
+        else if(props.entryFrom == 'left') {
+            var new_offset = -screen_size.current.width;
+            offset_x.current.setValue(new_offset);
+            initial_offset_x.current = new_offset;
+        }
+        else if(props.entryFrom == 'right') {
+            var new_offset = screen_size.current.width;
+            offset_x.current.setValue(new_offset);
+            initial_offset_x.current = new_offset;
+        }
+    };
+
+    const createPanResponder = () => {
+
+        const onPanMove = (e, state) => {
+            if(props.entryFrom == 'fade-in' || props.entryFrom == 'bottom') {
+                if(state.moveY > state.y0) {
+                    var new_position = to_offset_y.current + state.dy;
+
+                    offset_y.current.setValue(new_position);
+                }
+            }
+            else if (props.entryFrom == 'top') {
+                if(state.moveY < state.y0) {
+                    var new_position = to_offset_y.current + state.dy;
+
+                    offset_y.current.setValue(new_position);
+                }
+            }
+            else if (props.entryFrom == 'left') {
+                if(state.moveX < state.x0) {
+                    var new_position = to_offset_x.current + state.dx;
+
+                    offset_x.current.setValue(new_position);
+                }
+            }
+            else if (props.entryFrom == 'right') {
+                if(state.moveX > state.x0) {
+                    var new_position = to_offset_x.current + state.dx;
+
+                    offset_x.current.setValue(new_position);
                 }
             }
         }
 
         const onPanRelease = (e, state) => {
-            if (can_drag.current) {
-                can_drag.current = false;
-                last_dy_when_dragging.current = swap_on.current;
-                requestAnimationFrame(() => {//makes animation smoother
-                    Animated.timing(
-                        drag_xy.current,
-                        {
-                            toValue: { x: 0, y: swap_on.current},
-                            duration: animation_duration,
-                            useNativeDriver: use_native_driver,
-                        }
-                    ).start(() => {
-                        onDragEnd();
-                    });
-                });
-            }
-
-            if(can_swipe.current) {
-                //offset_x.current.setValue(0);
-                can_swipe.current = false;
-
-                if(is_content_on_right.current && !is_left_open.current) {
-                    if((!is_right_open.current && state.dx <= -right_threshold.current) ||
-                    (is_right_open.current && Math.abs(state.dx) < right_threshold.current)) {
-                        openActions(-right_actions_width.current);
-                        last_offset_x.current = -right_actions_width.current;
-                        is_right_open.current = true;
-                    }
-                    /*else if ((is_right_open.current && state.dx > right_threshold.current) ||
-                    (!is_right_open.current && Math.abs(state.dx) < right_threshold.current)) {
-                        closeActions();
-                    } */else {
-                        closeActions();
-                    }
+            let swipe_threshold = 100;
+            //alert("dx:" + state.dx + " x0:" + state.x0 + " moveX:" + state.moveX);
+            if(props.entryFrom == 'fade-in' || props.entryFrom == 'bottom') {
+                if(state.dy >= swipe_threshold) {
+                    closeModal();
                 }
-    
-                if(is_content_on_left.current && !is_right_open.current) {
-                    if((!is_left_open.current && state.dx >= left_threshold.current) ||
-                    (is_left_open.current && Math.abs(state.dx) < left_threshold.current)) {
-                        openActions(left_actions_width.current);
-                        last_offset_x.current = left_actions_width.current;
-                        is_left_open.current = true;
-                    }
-                    /*else if ((is_left_open.current && state.dx < -left_threshold.current) ||
-                    (!is_left_open.current && state.dx < left_threshold.current)) {
-                        closeActions();
-                    }*/ else {
-                        closeActions();
-                    }
+                else {
+                    setReadjustVertically(true);
+                }
+            }
+            else if (props.entryFrom == 'top') {
+                if(state.dy <= -swipe_threshold) {
+                    closeModal();
+                }
+                else {
+                    setReadjustVertically(true);
+                }
+            }
+            else if (props.entryFrom == 'left') {
+                if(state.dx <= -swipe_threshold) {
+                    closeModal();
+                }
+                else {
+                    setReadjustHorizontally(true);
+                }
+            }
+            else if (props.entryFrom == 'right') {
+                if(state.dx >= swipe_threshold) {
+                    closeModal();
+                }
+                else {
+                    setReadjustHorizontally(true);
                 }
             }
         }
 
-        setPanResponder(PanResponder.create({
-            onMoveShouldSetPanResponder: (e, state) => {
-                if(!can_drag.current && props.dragEnabled) {
-                    clearTimeout(timeout.current);
-                }
-                if(can_drag.current) {
-                    return true;
-                }
-                if(props.swipeEnabled) {
-                    if(Math.abs(state.dx) > Math.abs(state.dy) && !close_actions_animating.current) {
-                        can_swipe.current = true;
-                        return true;
-                    }
-                }
-                return false;
-            },
-            onPanResponderMove: (e, state) => {onPanMove(e, state)},
-            onPanResponderRelease: onPanRelease,
-            onPanResponderTerminate: onPanRelease,
-            onShouldBlockNativeResponder: (e, state) => {return true}
-        }));
-    }
-
-    const activateDragging = () => {
-        can_drag.current = true;
-        move_order_num.current = props.getOrderNum();
-        setZIndex(1);
-        props.setIsScrollEnabled(false);
-        swap_on.current = last_dy_when_dragging.current;
-        terminate_dragging.current = false;
-
-        props.draggingActivated();
-        setElementStyles(props.stylesWhenDragging);
-    }
-
-    const onDragEnd = () => {
-        setZIndex(0);
-        props.setIsScrollEnabled(true);
-        props.sortData();
-        props.draggingDeactivated();
-        setElementStyles(props.defaultStyles);
-    }
-
-    const deActivateDragging = () => {
-        can_drag.current = false;
-        onDragEnd();
-    }
-
-    const onComponentLayout = (e) => {
-        element_height.current = e.nativeEvent.layout.height;
-        if(props.threshold) {
-            threshold.current = Math.round((props.threshold / 100) * element_height.current);
-        }
-    }
-
-    const onRightActionsLayout = (e) => {
-        right_actions_width.current = e.nativeEvent.layout.width;
-    }
-
-    const onLeftActionsLayout = (e) => {
-        left_actions_width.current = e.nativeEvent.layout.width;
-    }
-
-    const moveControl = (move_up_down) => {
-        if(move_up_down == 'up') {
-            last_dy_when_dragging.current -= element_height.current;
-        }
-        else if (move_up_down == 'down') {
-            last_dy_when_dragging.current += element_height.current;
-        }
-        //last_dy_when_dragging.current = to_y.current;
-
-        Animated.timing(
-            drag_xy.current,
+        setPanResponder(PanResponder.create(
             {
-                toValue: { x: 0, y: last_dy_when_dragging.current},
-                duration: animation_duration,
-                useNativeDriver: use_native_driver,
+                onStartShouldSetPanResponder: (evt, gestureState) => true,
+                onPanResponderMove: onPanMove,
+                onPanResponderRelease: onPanRelease,
+                onPanResponderTerminate: onPanRelease,
             }
-        ).start();
+        ));
     }
-   
-    return (
-        <Animated.View
-            style={{
-                transform: drag_xy.current.getTranslateTransform(), 
-                zIndex: (Platform.OS === 'ios') ? z_index : 0,
-                elevation: (Platform.OS === 'android') ? z_index : 0,
-                ...props.style,
-                overflow: 'hidden'
-            }}
-        >
-            {is_content_on_left.current ? 
-                <View
-                    style={styles.left_actions}
-                    onLayout={(e) => onLeftActionsLayout(e)}
-                >
-                    {props.renderLeftActions(offset_x.current)}
-                </View> : false
+
+
+    //iOS only
+    /*****************************/
+    const onKeyboardHide = () => {
+        keyboard_height.current = 0;
+        setReadjustVertically(true);
+    }
+
+    const onKeyboardChange = (e) => {
+        keyboard_height.current = e.endCoordinates.height;
+        setReadjustVertically(true);
+    };
+    /*****************************/
+
+    const openModal = () => {
+        var _to_offset_x = 0;
+        if(props.modalPosition == 'center' || props.modalPosition == 'top' ||
+            props.modalPosition == 'bottom') {
+                _to_offset_x = (container_size.current.width - modal_size.current.width) / 2;
+            if(_to_offset_x < 0) _to_offset_x = 0;
+        }
+        else if (props.modalPosition == 'top-left') {
+            _to_offset_x = 0;
+        }
+        else if (props.modalPosition == 'top-right') {
+            _to_offset_x = (container_size.current.width - modal_size.current.width);
+        }
+        to_offset_x.current = _to_offset_x;
+        
+        var _to_offset_y = 0;
+        if(props.modalPosition == 'center') {
+            _to_offset_y = (container_size.current.height - keyboard_height.current - modal_size.current.height) / 2;
+            if(_to_offset_y < 0) _to_offset_y = 0;
+        }
+        else if(props.modalPosition == 'top' || props.modalPosition == 'top-left' ||
+                props.modalPosition == 'top-right') {
+            _to_offset_y = 0;
+        }
+        else if(props.modalPosition == 'bottom') {
+            _to_offset_y = container_size.current.height - keyboard_height.current - modal_size.current.height;
+        }
+        to_offset_y.current = _to_offset_y;
+        
+        if(props.entryFrom == 'top' || props.entryFrom == 'bottom' || (readjust_vertically && !first_time_open.current)) {
+            offset_x.current.setValue(_to_offset_x);
+
+            if(first_time_open.current) {
+                modal_fade_opacity.current.setValue(1);
             }
 
-            {is_content_on_right.current ? 
-                <Animated.View
-                    style={{
-                        ...styles.right_actions,
-                        right: -100,
-                        transform: [{translateX: offset_x.current}],
-                    }}
-                    onLayout={(e) => onRightActionsLayout(e)}
-                >
-                    {props.renderRightActions(offset_x.current)}
-                </Animated.View> : false
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        offset_y.current,
+                        {
+                            toValue: _to_offset_y,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropOpen : false
+                ]).start(() => {
+                    onOpened();
+                });
+            });
+        }
+        else if (((props.entryFrom == 'left' || props.entryFrom == 'right') && first_time_open.current) || (readjust_horizontally && !first_time_open.current)) {
+            offset_y.current.setValue(_to_offset_y);
+            modal_fade_opacity.current.setValue(1);
+
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        offset_x.current,
+                        {
+                            toValue: _to_offset_x,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropOpen : false
+                ]).start(() => {
+                    onOpened();
+                });
+            });
+        }
+        else if (props.entryFrom == 'fade-in' && first_time_open.current) {
+            offset_y.current.setValue(_to_offset_y);
+            offset_x.current.setValue(_to_offset_x);
+
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        modal_fade_opacity.current,
+                        {
+                            toValue: 1,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropOpen : false
+                ]).start(() => {
+                    onOpened();
+                });
+            });
+        }
+
+        const onOpened = () => {
+            if(props.onOpened && first_time_open.current) {
+                props.onOpened();
             }
+
+            setReadjustVertically(false);
+            setReadjustHorizontally(false);
+
+            first_time_open.current = false;
+        }
+    }
+
+    const closeModal = () => {
+        is_modal_closing.current = true;
+
+        if(props.onClosing) props.onClosing();
+        
+        if(props.entryFrom == 'top' || props.entryFrom == 'bottom') {
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        offset_y.current,
+                        {
+                            toValue: initial_offset_y.current,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropClose : false    
+                ]).start(() => {
+                    onClosed();
+                });
+            });
+        }
+        else if (props.entryFrom == 'left' || props.entryFrom == 'right') {
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        offset_x.current,
+                        {
+                            toValue: initial_offset_x.current,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropClose : false
+                ]).start(() => {
+                    onClosed();
+                });
+            });
+        }
+        else if (props.entryFrom == 'fade-in') {
+            requestAnimationFrame(() => {//makes animation smoother
+                Animated.parallel([
+                    Animated.timing(
+                        modal_fade_opacity.current,
+                        {
+                            toValue: -1,
+                            duration: animation_duration.current,
+                            useNativeDriver: use_native_driver.current,
+                        }
+                    ),
+                    props.backdrop ? animateBackdropClose : false        
+                ]).start(() => {
+                    onClosed();
+                });
+            });
+        }
+
+        const onClosed = () => {
+            setIsModalOpen(false);
+        };
+    }
+    
+    const animateBackdropOpen = 
+        Animated.timing(
+            backdrop_opacity.current,
+            {
+              toValue: to_backdrop_opacity.current,
+              duration: animation_duration.current,
+              useNativeDriver: use_native_driver.current,
+            }
+        );
+
+    const animateBackdropClose = 
+        Animated.timing(
+            backdrop_opacity.current,
+            {
+                toValue: 0,
+                duration: animation_duration.current,
+                useNativeDriver: use_native_driver.current,
+            }
+          );
+
+    const onViewLayout = (e) => {
+        modal_size.current.height = e.nativeEvent.layout.height;
+        modal_size.current.width = e.nativeEvent.layout.width;
+
+        setModalRendered(true);
+    }
+
+    const onContainerLayout = (e) => {//called every time screen layout changes(keyboard change and etc.)
+        container_size.current.height = e.nativeEvent.layout.height;
+        container_size.current.width = e.nativeEvent.layout.width;
+        
+        if(first_time_open.current) {
+            setContainerRendered(true);
+        }
+        else if (!first_time_open.current && !is_modal_closing.current) {
+            setReadjustVertically(true);
+        }
+    }
+
+
+    const getBackDrop = () => {
+        if(props.backdrop) {
+            return (
+                <TouchableWithoutFeedback onPress={() => props.backdropPressToClose ? closeModal() : null}>
+                    <Animated.View style={[styles.absolute, {opacity: backdrop_opacity.current, 
+                                          backgroundColor: backdrop_color.current}]}>
+                    </Animated.View>
+                </TouchableWithoutFeedback>
+            );
+        }
+    }
+    
+    const getContents = () => {
+        return (
             <Animated.View
-                onLayout={(e) => onComponentLayout(e)}
-                style={{
-                    transform: [{translateX: offset_x.current}],
-                    opacity: global_opacity,
-                    ...element_styles,
-                }}
+                onLayout={(e) => onViewLayout(e)}
+                style={[props.style, {opacity: modal_fade_opacity.current, 
+                        transform: [{translateY: offset_y.current}, {translateX: offset_x.current}]}]}
                 {...pan_responder.panHandlers}
             >
-                <TouchableWithoutFeedback
-                    onPressIn={() => {
-                        if(props.dragEnabled) {
-                            timeout.current = setTimeout(activateDragging, press_delay);
-                        }
-                        if(props.swipeEnabled) {
-                            props.closeOtherSwipes(props.getOrderNum());
-                        }
-                    }}
-                    onPressOut={() => {
-                        if(!can_drag.current && props.dragEnabled) {
-                            clearTimeout(timeout.current);
-                        }
-
-                        //workaround to disable dragging if it was activated but never dragged
-                        if(can_drag.current && props.dragEnabled) {
-                            timeout.current = setTimeout(deActivateDragging, 250);
-                        }
-                    }}
-                >
-                    <View>
-                        {props.children}
-                        {props.ItemSeparatorComponent()}
-                    </View>
-                </TouchableWithoutFeedback>
+                {props.children}
             </Animated.View>
-        </Animated.View>
-    );
-}
-
-const closeSwipeList = (data, current_order_num) => {
-    data.map((item) =>
-    {
-        //if(item.order_num != current_order_num && item.closeSwipe) {
-        if(item.closeSwipe) {
-            item.closeSwipe();
-        }
-    });
-}
-
-export default DragList = React.memo((props) => {
-    const flat_list_ref = useRef();
-    const [is_scroll_enabled, setIsScrollEnabled] = useState(true);
-    const border_radius = useRef(10);
-    
-    useMemo(() => {
-        max_order_num = props.data.length;
-
-        !props.initialNumToRender ? max_view_index = max_order_num : max_view_index = props.initialNumToRender - 1;
-
-        min_view_index = 0;
-
-        data = [...props.data];
-
-        initial_data = [];
-        props.data.map((item) => {
-            initial_data = [...initial_data, {...item}];
-        });
-
-        border_radius.current = props.cornerRadius ?? 10;
-    }, [props.data]);
+        );
+    }
 
     return (
-        <FlatList 
-            {...props}
-            ref={flat_list_ref}
-            renderItem={({item, index}) => {
-                let radius_top = 0;
-                let radius_bottom = 0;
-
-                if(index == 0) {
-                    radius_top = border_radius.current;
-                }
-                if(index == data.length - 1) {
-                    radius_bottom = border_radius.current;
-                }
-
-                return (
-                    <ListItem
-                        style={{
-                            borderBottomLeftRadius: radius_bottom,
-                            borderBottomRightRadius: radius_bottom,
-                            borderTopLeftRadius: radius_top,
-                            borderTopRightRadius: radius_top
-
-                        }}
-                        data={props.data}
-                        index={index}
-                        getOrderNum={() => {
-                            return item.order_num;
-                        }}
-                        maxOrderNum={max_order_num}
-                        sortData={() => {
-                            initial_data.map((item, index) => {
-                                if(item.order_num != data[index].order_num) {
-                                    props.getSortedData(data);
-                                    return;
-                                }
-                            });
-                        }}
-                        pressDelay={props.pressDelay}
-                        blockLeftRightMove={props.blockLeftRightMove}
-                        animationDuration={props.animationDuration}
-                        useNativeDriver={props.useNativeDriver}
-                        threshold={props.threshold}
-                        setIsScrollEnabled={(flag) => {setIsScrollEnabled(flag)}}
-                        ItemSeparatorComponent={() => {return props.ItemSeparatorComponent()}}
-                        addMoveControl={(moveControl) => {
-                            data[index].moveControl = moveControl;
-                        }}
-                        draggingActivated={() => {
-                            if(props.draggingActivated) {
-                                props.draggingActivated();
-                            }
-                        }}
-                        draggingDeactivated={() => {
-                            if(props.draggingDeactivated) {
-                                props.draggingDeactivated();
-                            }
-                        }}
-                        stylesWhenDragging={() => {
-                            if(props.stylesWhenDragging) {
-                                return props.stylesWhenDragging;
-                            }
-                            else {
-                                return false;
-                            }
-                        }}
-                        defaultStyles={() => {
-                            if(props.defaultStyles) {
-                                return props.defaultStyles;
-                            }
-                            else {
-                                return false;
-                            }
-                        }}
-                        dragEnabled={props.dragEnabled == true ? true : false}
-                        changePosition={(moved_to, relocate_order_num) => {
-                            if(relocate_order_num < 1 || relocate_order_num > max_order_num) {
-                                console.log('out of bounds');
-                                return;
-                            }
-
-                            //if next element is not in view, scroll down
-                            /*if((max_view_index - 1) <= relocate_index 
-                            && relocate_index < (max_order_num - 1)) {
-                                let params = {index: (relocate_index + 2), viewOffset: 36, viewPosition: 1};
-                                flat_list_ref.current.scrollToIndex(params);
-                                max_view_index++;
-                            }
-                            else if ((min_view_index + 1) == relocate_index && relocate_index > 1) {
-                                let params = {index: (relocate_index - 2), viewOffset: 36, viewPosition: 0};
-                                flat_list_ref.current.scrollToIndex(params);
-                                max_view_index--;
-                            }*/
-                            //find index of next/prev element
-                            let relocate_index = '';
-                            data.map((item, index) => {
-                                if(item.order_num == relocate_order_num) {
-                                    relocate_index = index;
-                                    return;
-                                }
-                            })
-
-                            if(moved_to == 'up') {
-                                data[relocate_index].moveControl('down');
-                            }
-                            else if (moved_to == 'down') {
-                                data[relocate_index].moveControl('up');
-                            }
-
-                            //reorder
-                            if(moved_to == "up") {
-                                data[index].order_num--;
-                                data[relocate_index].order_num++;
-                            }
-                            else {
-                                data[index].order_num++;
-                                data[relocate_index].order_num--;
-                            }
-                        }}
-
-                        //for swipe
-                        addCloseSwipeLink={(closeSwipe) => {
-                            data[index].closeSwipe = closeSwipe;
-                        }}
-                        closeOtherSwipes={(current_order_num) => {
-                            closeSwipeList(data, current_order_num);
-                        }}
-                        onSwiped={() => {
-                            if(props.onSwiped) {
-                                props.onSwiped();
-                            }
-                            else {
-                                return false;
-                            }
-                        }}
-                        closeAllSwipes={props.closeAllSwipes ? props.closeAllSwipes : false}
-                        swipeEnabled={props.swipeEnabled == true ? true : false}
-                        rightThreshold={props.rightThreshold ? props.rightThreshold : 0}
-                        leftThreshold={props.leftThreshold ? props.leftThreshold : 0}
-                        overSwipeRight={props.overSwipeRight == true ? true : false}
-                        overSwipeLeft={props.overSwipeLeft == true? true : false}
-                        isContentOnRight={props.renderRightActions ? true : false}
-                        renderRightActions={(offset_x) => {
-                            if(props.renderRightActions) {
-                                const rightAction = props.renderRightActions(item, index);
-                                return rightAction(offset_x);
-                            }
-                            else {
-                                return false;
-                            }
-                        }}
-                        isContentOnLeft={props.renderLeftActions ? true : false}
-                        renderLeftActions={(offset_x) => {
-                            if(props.renderLeftActions) {
-                                const leftAction = props.renderLeftActions(item, index);
-                                return leftAction(offset_x);
-                            }
-                            else {
-                                return false;
-                            }
-                        }}
-                    >
-                        {props.renderItem({item, index})}
-                    </ListItem>
-                );
-            }}
-            scrollEnabled={is_scroll_enabled}
-            ItemSeparatorComponent={() => {return false}}
-        />
+        <Modal
+            visible={is_modal_open}
+            transparent={true}
+            supportedOrientations={['landscape', 'portrait', 'portrait-upside-down']}
+            hardwareAccelerated={true}
+        >
+            <View 
+                style={[styles.absolute, {flex: 1}]}
+                onLayout={(e) => onContainerLayout(e)}
+            >
+                {getBackDrop()}
+                {getContents()}
+            </View>
+        </Modal>
     );
-});
+}
 
-var styles = StyleSheet.create({
-    left_actions: {
-        position: "absolute"
-    },
-    right_actions: {
-        position: "absolute"
+var styles = StyleSheet.create({  
+    absolute: {
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0
     }
-});
+  });
