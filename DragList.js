@@ -1,17 +1,20 @@
 import React, {useEffect, useState, useRef, useMemo} from "react";
 import {
+    Alert,
     View, 
     Animated,
     StyleSheet,
     PanResponder,
     FlatList,
     TouchableWithoutFeedback,
+    Text,
     Easing
 } from 'react-native';
 
 
 //animationDuration={number / default 250}
 //useNativeDriver={bool / default false}
+//borderRadius={int / default 10}
 
 //*props for DragList
 //threshold={number / default 0} when to swap elements(sensitivity) in %
@@ -279,6 +282,7 @@ const ListItem = (props) => {
             }
 
             if(can_swipe.current) {
+                //offset_x.current.setValue(0);
                 can_swipe.current = false;
 
                 if(is_content_on_right.current && !is_left_open.current) {
@@ -288,8 +292,10 @@ const ListItem = (props) => {
                         last_offset_x.current = -right_actions_width.current;
                         is_right_open.current = true;
                     }
-                    else if ((is_right_open.current && state.dx > right_threshold.current) ||
+                    /*else if ((is_right_open.current && state.dx > right_threshold.current) ||
                     (!is_right_open.current && Math.abs(state.dx) < right_threshold.current)) {
+                        closeActions();
+                    } */else {
                         closeActions();
                     }
                 }
@@ -301,8 +307,10 @@ const ListItem = (props) => {
                         last_offset_x.current = left_actions_width.current;
                         is_left_open.current = true;
                     }
-                    else if ((is_left_open.current && state.dx < -left_threshold.current) ||
+                    /*else if ((is_left_open.current && state.dx < -left_threshold.current) ||
                     (!is_left_open.current && state.dx < left_threshold.current)) {
+                        closeActions();
+                    }*/ else {
                         closeActions();
                     }
                 }
@@ -396,7 +404,9 @@ const ListItem = (props) => {
             style={{
                 transform: drag_xy.current.getTranslateTransform(), 
                 zIndex: (Platform.OS === 'ios') ? z_index : 0,
-                elevation: (Platform.OS === 'android') ? z_index : 0
+                elevation: (Platform.OS === 'android') ? z_index : 0,
+                ...props.style,
+                overflow: 'hidden'
             }}
         >
             {is_content_on_left.current ? 
@@ -409,19 +419,23 @@ const ListItem = (props) => {
             }
 
             {is_content_on_right.current ? 
-                <View
-                    style={styles.right_actions}
+                <Animated.View
+                    style={{
+                        ...styles.right_actions,
+                        right: -100,
+                        transform: [{translateX: offset_x.current}],
+                    }}
                     onLayout={(e) => onRightActionsLayout(e)}
                 >
                     {props.renderRightActions(offset_x.current)}
-                </View> : false
+                </Animated.View> : false
             }
             <Animated.View
                 onLayout={(e) => onComponentLayout(e)}
                 style={{
                     transform: [{translateX: offset_x.current}],
                     opacity: global_opacity,
-                    ...element_styles
+                    ...element_styles,
                 }}
                 {...pan_responder.panHandlers}
             >
@@ -455,12 +469,6 @@ const ListItem = (props) => {
     );
 }
 
-//must be outside component function to prevent reference change on re-render
-const onViewableItemsChanged = (info) => {
-    //use this to implement auto-scrolling
-    //alert(JSON.stringify(info));
-}
-
 const closeSwipeList = (data, current_order_num) => {
     data.map((item) =>
     {
@@ -471,9 +479,10 @@ const closeSwipeList = (data, current_order_num) => {
     });
 }
 
-export default DragList = (props) => {
+export default DragList = React.memo((props) => {
     const flat_list_ref = useRef();
     const [is_scroll_enabled, setIsScrollEnabled] = useState(true);
+    const border_radius = useRef(10);
     
     useMemo(() => {
         max_order_num = props.data.length;
@@ -488,16 +497,34 @@ export default DragList = (props) => {
         props.data.map((item) => {
             initial_data = [...initial_data, {...item}];
         });
+
+        border_radius.current = props.cornerRadius ?? 10;
     }, [props.data]);
 
     return (
         <FlatList 
             {...props}
             ref={flat_list_ref}
-            onViewableItemsChanged={onViewableItemsChanged}
             renderItem={({item, index}) => {
+                let radius_top = 0;
+                let radius_bottom = 0;
+
+                if(index == 0) {
+                    radius_top = border_radius.current;
+                }
+                if(index == data.length - 1) {
+                    radius_bottom = border_radius.current;
+                }
+
                 return (
                     <ListItem
+                        style={{
+                            borderBottomLeftRadius: radius_bottom,
+                            borderBottomRightRadius: radius_bottom,
+                            borderTopLeftRadius: radius_top,
+                            borderTopRightRadius: radius_top
+
+                        }}
                         data={props.data}
                         index={index}
                         getOrderNum={() => {
@@ -644,15 +671,13 @@ export default DragList = (props) => {
             ItemSeparatorComponent={() => {return false}}
         />
     );
-}
+});
 
 var styles = StyleSheet.create({
     left_actions: {
-        position: "absolute",
-        left: 0
+        position: "absolute"
     },
     right_actions: {
-        position: "absolute",
-        right: 0
+        position: "absolute"
     }
 });
